@@ -1,0 +1,223 @@
+---
+title: "Calculadora de Beta"
+author: "Guillermo Yañez con los estudiantes UDP; Joel de Oliveira; Camila Cerda; Aline Díaz; Ítalo guggiana; Rodrigo Acuña"
+date: "01-12-2022"
+output: html_document
+runtime: shiny
+---
+
+### En este ejemplo explicaremos como encontrar el beta de una acción, junto con información financiera relevante.
+
+Librerías requeridas:
+
+```{r message=FALSE, warning=FALSE}
+library(shiny)
+library(quantmod)
+library(tidyquant)
+library(tidyverse)
+library(formattable)
+library(patchwork)
+library(yfR)
+```
+
+### Instrucciones:
+
+#### 0 - Antes que todo.
+
+Buscamos los tickers del SP500 , con la funcion tq_index lo logramos.
+
+#### 1 - Primero agregamos nuestros inputs que creemos relevantes.
+
+-   SelectInput para los tickers
+-   dateInput(1) para la fecha inicial
+-   dateInput(2) para la fecha final
+-   numericInput para elegir una tasa libre de riesgo
+
+#### 2 - Posterior a crear los inputs, creamos los outputs para ir agregando al mainpanel.
+
+-   
+
+    1.  Usamos renderTable para mostrar un resumen o información que es relevante sobre la empresa de la cual se esta investigando.
+
+-   
+
+    2.  Usamos renderPlot para unir dos graficos sobre la evolucion del precio de la accion que se esta investigando y el SP500
+
+-   
+
+    3.  Usamos renderTable para mostrar 2 informaciones sumamente importantes, el promedio de retornos y la varianza del retorno de la accion que estamos buscando.
+
+-   
+
+    4.  Usamos renderTable para mostrar el beta calculado mediante: Eri = rf + [Erm -- rf] βi. El usuario puede elegir la tasa libre de riesgo que desea usar
+
+-   
+
+    5.  Por último graficamos.
+
+```{r}
+
+library(shiny)
+
+
+sp500 <- tq_index("sp500")
+tickers <- sp500[, 1:2]
+
+ui000 <- fluidPage(
+    titlePanel("Calculadora de Beta"),
+    sidebarLayout(
+        
+        #1
+        sidebarPanel(
+            "Seleccione el ticker que desea consultar",
+            selectInput('tickers', 
+                        label = 'Acción', 
+                        choices = tickers$symbol),
+            "Seleccione rango de fecha y tasa libre de riesgo",
+            dateInput("fechainicio",
+                      label = "Fecha de inicio",
+                      value = today()-365,
+                      format = "yyyy-mm-dd"),
+            dateInput("fechatermino",
+                      label = "Fecha de término",
+                      value = today(),
+                      format = "yyyy-mm-dd"),
+            numericInput("tasalr", "Tasa libre de riesgo",
+                         value = 0.005)
+            
+        ),
+        mainPanel(h3("Resumen de la acción:"),
+            tableOutput("tabla1"),
+            h3("Gráfico de precios (Acción y SP500):"),
+            plotOutput("plot1"),
+            h4("A continuación presentamos la media y varianza según el tiempo (valores expresados en %"),
+            tableOutput("tabla2"),
+            h4("Encontramos el beta:"),
+            tableOutput("interpretacion"),
+            h4("Graficamos:"),
+            plotOutput("plot2")
+            
+            
+            
+            
+            
+        ) 
+    )
+)
+
+server000 <- function(input, output) {
+    
+    #1
+    output$tabla1 <- renderTable({
+        data_frame(filter(sp500, symbol == input$tickers))
+        
+    })
+    
+    #2
+    output$plot1 <- renderPlot({
+        stock1 <- yf_get(
+            tickers = input$tickers,
+            first_date = input$fechainicio,
+            last_date = input$fechatermino,
+            freq_data = "daily"
+        )
+        
+        stockSP500 <- yf_get(
+            tickers = "^GSPC",
+            first_date = input$fechainicio,
+            last_date = input$fechatermino,
+            freq_data = "daily"
+        )
+        
+        
+        stock1 <- stock1[, c(2,6)]
+        colnames(stock1) <- c("Fecha", "Precio_accion")
+        
+        stockSP500 <- stockSP500[, c(2,6)]
+        colnames(stockSP500) <- c("Fecha", "Precio_SP500")
+        
+        p1 <- ggplot(stock1, aes(x=Fecha, y =Precio_accion)) + geom_line() + xlab("Precio Accion") +
+            ylab("Fecha") + ggtitle("Evolución precio acción elegida") + theme_classic()
+        
+        p2 <- ggplot(stockSP500, aes(x=Fecha, y=Precio_SP500)) + geom_line() + xlab("Precio SP500") +
+            ylab("Fecha") + ggtitle("Evolución precio SP500", subtitle = input$tickers) + theme_classic()
+        
+        p1/p2
+    
+    })
+    
+    #3
+    output$tabla2 <- renderTable({
+        stock1 <- getSymbols(input$tickers, src="yahoo", from = input$fechainicio,
+                             to = input$fechatermino, auto.assign = FALSE)
+        stockSP500 <- getSymbols("^GSPC",src="yahoo", from = input$fechainicio,
+                                 to = input$fechatermino, auto.assign = FALSE)
+        
+        stock1 <- stock1[, 4]
+        stockSP500 <- stockSP500[, 4]
+        
+        retornos_stock1 <- na.omit(Return.calculate(stock1, method="simple")[-c(1),])
+        retornos_stockSP500 <- na.omit(Return.calculate(stockSP500, method="simple")[-c(1),])
+        
+        Estadistica <- data_frame("Tipo" = c(input$tickers, "Sp500"),
+                                  "Promedio Retornos" = c(mean(retornos_stock1)*100, 
+                                                          mean(retornos_stockSP500)*100),
+                                  "Varianza Retornos" = c(var(retornos_stock1)*100,
+                                                          var(retornos_stockSP500)*100)
+        )
+        Estadistica
+        
+    })
+    
+    output$interpretacion <- renderTable({
+        stock1 <- getSymbols(input$tickers, src="yahoo", from = input$fechainicio,
+                             to = input$fechatermino, auto.assign = FALSE)
+        stockSP500 <- getSymbols("^GSPC",src="yahoo", from = input$fechainicio,
+                                 to = input$fechatermino, auto.assign = FALSE)
+        
+        stock1 <- stock1[, 4]
+        stockSP500 <- stockSP500[, 4]
+        
+        retornos_stock1 <- na.omit(Return.calculate(stock1, method="simple")[-c(1),])
+        retornos_stockSP500 <- na.omit(Return.calculate(stockSP500, method="simple")[-c(1),])
+        
+        retornos <- data_frame(retornos_stock1-input$tasalr, retornos_stockSP500-input$tasalr)
+        
+        regresion <- lm(retornos_stock1 ~ 0 + retornos_stockSP500, retornos)
+        
+        data_frame("Beta" = c(regresion$coefficients))
+        
+    })
+    
+    output$plot2 <- renderPlot({
+        
+        stock1 <- getSymbols(input$tickers, src="yahoo", from = input$fechainicio,
+                             to = input$fechatermino, auto.assign = FALSE)
+        stockSP500 <- getSymbols("^GSPC",src="yahoo", from = input$fechainicio,
+                                 to = input$fechatermino, auto.assign = FALSE)
+        
+        stock1 <- stock1[, 4]
+        stockSP500 <- stockSP500[, 4]
+        
+        retornos_stock1 <- na.omit(Return.calculate(stock1, method="simple")[-c(1),])
+        retornos_stockSP500 <- na.omit(Return.calculate(stockSP500, method="simple")[-c(1),])
+        
+        retornos <- data.frame(retornos_stock1, retornos_stockSP500)
+        
+        
+        ggplot(retornos, aes(x = retornos_stockSP500, y = retornos_stock1)) +
+            geom_point() +
+            stat_smooth(method = "lm") +
+            ylab("SP500") +
+            xlab(input$tickers) +
+            theme_minimal()
+        
+    })
+    
+}
+
+
+
+shinyApp(ui = ui000, server = server000)
+
+```
